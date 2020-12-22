@@ -216,7 +216,44 @@ public class BoundedChannelComparison {
         .ConsumeEnumerator();
 }
 
+[MemoryDiagnoser]
+public class SlowConsumerBenchmark {
+    #pragma warning disable 1998
+    private static async IAsyncEnumerator<int> SimulateFastProducer(long count) {
+        int val = 0;
+        for (long x = 0; x < count; ++x) {
+            yield return val++;
+        }
+    }
+    #pragma warning restore 1998
+
+    private static void Error() => throw new Exception("Error.");
+
+    private static async ValueTask ConsumeAsyncEnumerator(IAsyncEnumerator<int> enumerator, long expectedCount) {
+        int expected = 0;
+        long count = 0;
+        while (await enumerator.MoveNextAsync().ConfigureAwait(false)) {
+            if (expected != enumerator.Current) Error();
+            ++expected;
+            ++count;
+
+            long sum = 0;
+            for (int x = 0; x < 1000; ++x) {
+                sum += x;
+            }
+            if (sum != 999 * 500) Error();
+        }
+
+        if (count != expectedCount) Error();
+    }
+
+    [Benchmark]
+    public ValueTask ReadDirect() => ConsumeAsyncEnumerator(SimulateFastProducer(1_000_000), 1_000_000);
+
+    [Benchmark]
+    public ValueTask ReadThroughQueue() => ConsumeAsyncEnumerator(SimulateFastProducer(1_000_000).ProcessAsynchronously(10*1024, 1024), 1_000_000);
+}
 
 class Program {
-    static void Main() => BenchmarkRunner.Run<BoundedChannelComparison>();
+    static void Main() => BenchmarkRunner.Run<SlowConsumerBenchmark>();
 }

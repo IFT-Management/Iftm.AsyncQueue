@@ -127,4 +127,29 @@ public class TestAsyncQueue  {
         }
     }
 
+    #pragma warning disable 1998
+    private static async IAsyncEnumerator<int> SimulateFastProducer(long count) {
+        int val = 0;
+        for (long x = 0; x < count; ++x) {
+            yield return val++;
+        }
+    }
+    #pragma warning restore 1998
+
+    private static void Error() => throw new Exception("Error.");
+
+    private static async ValueTask ConsumeAsyncEnumerator(IAsyncEnumerator<int> enumerator, long expectedCount) {
+        int expected = 0;
+        long count = 0;
+        while (await enumerator.MoveNextAsync().ConfigureAwait(false)) {
+            if (expected != enumerator.Current) Error();
+            ++expected;
+            ++count;
+        }
+
+        if (count != expectedCount) Error();
+    }
+
+    [Fact]
+    public async Task QuickTest() => await ConsumeAsyncEnumerator(SimulateFastProducer(1_000_000), 1_000_000);
 }

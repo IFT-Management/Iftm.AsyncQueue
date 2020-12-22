@@ -119,13 +119,14 @@ namespace Iftm.AsyncQueue {
         private readonly T[] _buffer;
         private readonly int _bufferMask;
         private readonly int _readHisteresis;
+        private int _numReadsAvailable;
 
         private T _current = default!;
         private T _pendingWriteValue = default!;
 
         public AsyncQueue(int capacity, int readHisteresis = 1) {
             if (capacity <= 0 || capacity > (1 << 30)) throw new ArgumentOutOfRangeException(nameof(capacity));
-            if (readHisteresis <= 0 || readHisteresis > capacity) throw new ArgumentOutOfRangeException(nameof(readHisteresis));
+            if (readHisteresis < 1 || readHisteresis > capacity) throw new ArgumentOutOfRangeException(nameof(readHisteresis));
 
             // if capacity is not a power of two round it up to the first higher power of two
             if (BitOperations.PopCount((uint)capacity) != 1) {
@@ -134,52 +135,66 @@ namespace Iftm.AsyncQueue {
 
             _buffer = new T[capacity];
             _bufferMask = capacity - 1;
-            _readHisteresis = readHisteresis;
+            _readHisteresis = readHisteresis - 1;
         }
 
         public ValueTask<bool> MoveNextAsync() {
-            var state = _state.ReadAtomic();
+            if (_numReadsAvailable > 0) {
+                _current = _buffer[_state.Start];
+                _state = new State(_state.Flags, (_state.Start + 1) & _bufferMask, _state.Count - 1);
+                --_numReadsAvailable;
+                if (_numReadsAvailable == 0) _writeWaiter.SetResult(true);
+                return new ValueTask<bool>(true);
+            }
+            else {
+                var state = _state.ReadAtomic();
 
-            for (; ; ) {
-                if (state.IsReadCompleted || state.HasReadAwaiter) ThrowInvalidOperation();
-                if (state.IsWriteCompleted && _exception != null) {
-                    ExceptionDispatchInfo.Throw(_exception);
-                }
-
-                if (state.Count == 0) {
-                    if (state.IsWriteCompleted) {
-                        return new ValueTask<bool>(false);
+                for (; ; ) {
+                    if (state.IsReadCompleted || state.HasReadAwaiter) ThrowInvalidOperation();
+                    if (state.IsWriteCompleted && _exception != null) {
+                        ExceptionDispatchInfo.Throw(_exception);
                     }
-                    else {
-                        var newState = new State(State.HasReadAwaiterFlag, state.Start, 0);
 
-                        if (_state.TryWrite(ref state, newState)) {
-                            return _readWaiter.GetResultAsync();
+                    if (state.Count == 0) {
+                        if (state.IsWriteCompleted) {
+                            return new ValueTask<bool>(false);
+                        }
+                        else {
+                            var newState = new State(State.HasReadAwaiterFlag, state.Start, 0);
+
+                            if (_state.TryWrite(ref state, newState)) {
+                                return _readWaiter.GetResultAsync();
+                            }
                         }
                     }
-                }
-                else { // if there is data in the buffer, simply return it
-                    Debug.Assert(!state.HasWriteAwaiter || state.Count == _buffer.Length);
+                    else { // if there is data in the buffer, simply return it
+                        Debug.Assert(!state.HasWriteAwaiter || state.Count == _buffer.Length);
 
-                    if (state.HasWriteAwaiter) { // the buffer is full and a writer is waiting
-                        _current = _buffer[state.Start];
-                        _buffer[state.Start] = _pendingWriteValue;
+                        if (state.HasWriteAwaiter) { // the buffer is full and a writer is waiting
+                            _current = _buffer[state.Start];
+                            _buffer[state.Start] = _pendingWriteValue;
 
-                        var start = (state.Start + 1) & _bufferMask;
-                        _state = new State(state.Flags & State.WriteCompletedFlag, start, state.Count);
+                            var start = (state.Start + 1) & _bufferMask;
+                            _state = new State(state.Flags & State.WriteCompletedFlag, start, state.Count);
 
-                        _writeWaiter.SetResult(true);
+                            if (_readHisteresis > 0) {
+                                _numReadsAvailable = _readHisteresis;
+                            }
+                            else {
+                                _writeWaiter.SetResult(true);
+                            }
 
-                        return new ValueTask<bool>(true);
-                    }
-                    else {
-                        _current = _buffer[state.Start];
-                        var start = (state.Start + 1) & _bufferMask;
-                        var count = state.Count - 1;
-
-                        var newState = new State(state.Flags & State.WriteCompletedFlag, start, count);
-                        if (_state.TryWrite(ref state, newState)) {
                             return new ValueTask<bool>(true);
+                        }
+                        else {
+                            _current = _buffer[state.Start];
+                            var start = (state.Start + 1) & _bufferMask;
+                            var count = state.Count - 1;
+
+                            var newState = new State(state.Flags & State.WriteCompletedFlag, start, count);
+                            if (_state.TryWrite(ref state, newState)) {
+                                return new ValueTask<bool>(true);
+                            }
                         }
                     }
                 }
