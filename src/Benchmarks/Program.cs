@@ -218,18 +218,35 @@ public class BoundedChannelComparison {
 
 [MemoryDiagnoser]
 public class SlowConsumerBenchmark {
+    private static void Compute(int cycles) {
+        long sum = 0;
+        for (int x = 0; x < cycles; ++x) {
+            sum += x;
+        }
+        if (sum != (cycles - 1) * cycles / 2) Error();
+    }
+
     #pragma warning disable 1998
-    private static async IAsyncEnumerator<int> SimulateFastProducer(long count) {
+    public static async IAsyncEnumerator<int> ProduceFast(long count) {
         int val = 0;
         for (long x = 0; x < count; ++x) {
             yield return val++;
         }
     }
+
+    public static async IAsyncEnumerator<int> ProduceSlow(long count, int computationCycles) {
+        int val = 0;
+        for (long x = 0; x < count; ++x) {
+            Compute(computationCycles);
+
+            yield return val++;
+        }
+    }
     #pragma warning restore 1998
 
-    private static void Error() => throw new Exception("Error.");
+    public static void Error() => throw new Exception("Error.");
 
-    private static async ValueTask ConsumeAsyncEnumerator(IAsyncEnumerator<int> enumerator, long expectedCount) {
+    public static async ValueTask ConsumeSlow(IAsyncEnumerator<int> enumerator, long expectedCount, int computationCycles) {
         int expected = 0;
         long count = 0;
         while (await enumerator.MoveNextAsync().ConfigureAwait(false)) {
@@ -237,23 +254,53 @@ public class SlowConsumerBenchmark {
             ++expected;
             ++count;
 
-            long sum = 0;
-            for (int x = 0; x < 1000; ++x) {
-                sum += x;
-            }
-            if (sum != 999 * 500) Error();
+            Compute(computationCycles);
+        }
+
+        if (count != expectedCount) Error();
+    }
+
+    public static async ValueTask ConsumeFast(IAsyncEnumerator<int> enumerator, long expectedCount) {
+        int expected = 0;
+        long count = 0;
+        while (await enumerator.MoveNextAsync().ConfigureAwait(false)) {
+            if (expected != enumerator.Current) Error();
+            ++expected;
+            ++count;
         }
 
         if (count != expectedCount) Error();
     }
 
     [Benchmark]
-    public ValueTask ReadDirect() => ConsumeAsyncEnumerator(SimulateFastProducer(1_000_000), 1_000_000);
+    public ValueTask DirectFastProducerFastConsumer() => ConsumeFast(ProduceFast(1_000_000), 1_000_000);
 
     [Benchmark]
-    public ValueTask ReadThroughQueue() => ConsumeAsyncEnumerator(SimulateFastProducer(1_000_000).ProcessAsynchronously(10*1024, 1024), 1_000_000);
+    public ValueTask AmortizedFastProducerFastConsumer1() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1), 1_000_000);
+
+
+    [Benchmark]
+    public ValueTask DirectFastProducerSlowConsumer() => ConsumeSlow(ProduceFast(1_000_000), 1_000_000, 1000);
+
+    [Benchmark]
+    public ValueTask DirectSlowProducerFastConsumer() => ConsumeFast(ProduceSlow(1_000_000, 2000), 1_000_000);
+
+
+    [Benchmark]
+    public ValueTask AmortizedFastProducerSlowConsumer() => ConsumeSlow(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024), 1_000_000, 1000);
+
+
+    [Benchmark]
+    public ValueTask DirectSlowProducerSlowConsumer() => ConsumeSlow(ProduceSlow(1_000_000, 2000), 1_000_000, 1000);
+
+    [Benchmark]
+    public ValueTask AmortizedSlowProducerSlowConsumer1() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(10*1024), 1_000_000, 1000);
 }
 
 class Program {
     static void Main() => BenchmarkRunner.Run<SlowConsumerBenchmark>();
+
+    //static async Task Main() {
+    //    await SlowConsumerBenchmark.ConsumeSlow(SlowConsumerBenchmark.ProduceSlow(10_000_000, 2000).ProcessAsynchronously(10 * 1024), 10_000_000, 1000);
+    //}
 }

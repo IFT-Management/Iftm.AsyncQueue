@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace Iftm.AsyncQueue {
     public struct AsyncProcessingEnumerable<T> : IAsyncEnumerable<T> {
@@ -35,7 +36,9 @@ namespace Iftm.AsyncQueue {
             }
 
             var queue = new AsyncQueue<T>(bufferSize, readHisteresis);
-            WriteToQueue(enumerator, queue);
+
+            Task.Run(() => WriteToQueue(enumerator, queue));
+
             return queue;
         }
 
