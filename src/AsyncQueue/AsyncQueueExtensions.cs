@@ -18,7 +18,7 @@ namespace Iftm.AsyncQueue {
 
 
     public static class AsyncQueueExtensions {
-        private static (int Count, ValueTask<bool> MoveNextTask, bool EnumeratorConsumed) WriteToSpan<T>(Span<T> span, in T val, IAsyncEnumerator<T> enumerator) {
+        private static (int Count, ValueTask<bool> MoveNextTask, bool EnumeratorConsumed) WriteToSpan<T>(Segment<T> span, in T val, IAsyncEnumerator<T> enumerator) {
             int count = 0;
 
             span[count++] = val;
@@ -49,7 +49,7 @@ namespace Iftm.AsyncQueue {
                     var hasMore = await enumerator.MoveNextAsync().ConfigureAwait(false);
 
                     while (hasMore) {
-                        var (count, moveNextTask, enumeratorConsumed) = WriteToSpan(writeBuffer.Span, enumerator.Current, enumerator);
+                        var (count, moveNextTask, enumeratorConsumed) = WriteToSpan(writeBuffer, enumerator.Current, enumerator);
                         queue.Commit(count);
                         if (enumeratorConsumed) {
                             break;
@@ -84,7 +84,7 @@ namespace Iftm.AsyncQueue {
                 var readBuffer = await reader.GetReadBufferAsync().ConfigureAwait(false);
                 if (readBuffer.Length == 0) break;
 
-                foreach (var x in MemoryMarshal.ToEnumerable(readBuffer)) {
+                foreach (var x in readBuffer) {
                     yield return x;
                 }
 

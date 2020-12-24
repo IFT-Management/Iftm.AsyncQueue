@@ -31,7 +31,7 @@ public class AsyncQueueTests {
         var readBuffer = await reader.GetReadBufferAsync();
         Assert.False(task.IsCompleted);
 
-        Assert.Equal(1, readBuffer.Span[0]);
+        Assert.Equal(1, readBuffer[0]);
         reader.MarkRead(1);
 
         writeBuffer = await task;

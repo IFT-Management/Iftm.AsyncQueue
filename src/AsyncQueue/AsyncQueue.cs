@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -7,8 +8,54 @@ using System.Text;
 using System.Threading.Tasks;
 
 namespace Iftm.AsyncQueue {
+    public struct ReadOnlySegment<T> : IEnumerable<T> {
+        public readonly T[] Array;
+        public readonly int Start, Length;
+
+        public ReadOnlySegment(T[] array, int start, int length) {
+            Array = array;
+            Start = start;
+            Length = length;
+        }
+
+        public readonly ref T this[int index] {
+            get {
+                if ((uint)index >= (uint)Length) throw new ArgumentOutOfRangeException(nameof(index));
+                return ref Array[Start + index];
+            }
+        }
+
+        public IEnumerator<T> GetEnumerator() {
+            int end = Start + Length;
+            for (int x = Start; x < end; ++x) yield return Array[x];
+        }
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+        public ReadOnlySpan<T> Span => Array.AsSpan(Start, Length);
+    }
+
+    public struct Segment<T> {
+        public readonly T[] Array;
+        public readonly int Start, Length;
+
+        public Segment(T[] array, int start, int length) {
+            Array = array;
+            Start = start;
+            Length = length;
+        }
+
+        public ref T this[int index] {
+            get {
+                if ((uint)index >= (uint)Length) throw new ArgumentOutOfRangeException(nameof(index));
+                return ref Array[Start + index];
+            }
+        }
+
+        public Span<T> Span => Array.AsSpan(Start, Length);
+    }
+
     public interface IAsyncQueueReader<T> {
-        ValueTask<ReadOnlyMemory<T>> GetReadBufferAsync();
+        ValueTask<ReadOnlySegment<T>> GetReadBufferAsync();
         void MarkRead(int read);
 
         void CompleteReader();
@@ -16,7 +63,7 @@ namespace Iftm.AsyncQueue {
     }
 
     public interface IAsyncQueueWriter<T> {
-        ValueTask<Memory<T>> GetWriteBufferAsync();
+        ValueTask<Segment<T>> GetWriteBufferAsync();
         void Commit(int written);
 
         void CompleteWrite();
@@ -26,8 +73,8 @@ namespace Iftm.AsyncQueue {
     public class AsyncQueue<T> : IAsyncQueueReader<T>, IAsyncQueueWriter<T> {
         private readonly T[] _buffer;
         private readonly int _bufferMask, _maxReadBlock, _maxWriteBlock;
-        private protected readonly ReusableTaskCompletionSource<ReadOnlyMemory<T>> _readAwaiter = new ReusableTaskCompletionSource<ReadOnlyMemory<T>>();
-        private protected readonly ReusableTaskCompletionSource<Memory<T>> _writeAwaiter = new ReusableTaskCompletionSource<Memory<T>>();
+        private protected readonly ReusableTaskCompletionSource<ReadOnlySegment<T>> _readAwaiter = new ReusableTaskCompletionSource<ReadOnlySegment<T>>();
+        private protected readonly ReusableTaskCompletionSource<Segment<T>> _writeAwaiter = new ReusableTaskCompletionSource<Segment<T>>();
 
         private enum AwaiterStatus {
             NoAwaiter,
@@ -58,12 +105,12 @@ namespace Iftm.AsyncQueue {
             _maxWriteBlock = maxWriteBlock;
         }
 
-        ValueTask<Memory<T>> IAsyncQueueWriter<T>.GetWriteBufferAsync() {
+        ValueTask<Segment<T>> IAsyncQueueWriter<T>.GetWriteBufferAsync() {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
                 if (_readerException != null) {
-                    return new ValueTask<Memory<T>>(Task.FromException<Memory<T>>(_readerException.SourceException));
+                    return new ValueTask<Segment<T>>(Task.FromException<Segment<T>>(_readerException.SourceException));
                 }
                 else if (_readerCompleted) {
                     return default;
@@ -80,8 +127,7 @@ namespace Iftm.AsyncQueue {
                         var toEndOfBuffer = _buffer.Length - endOfData;
                         var blockSize = Math.Min(freeAmount, Math.Min(toEndOfBuffer, _maxWriteBlock));
 
-                        var buffer = _buffer.AsMemory(endOfData, blockSize);
-                        return new ValueTask<Memory<T>>(buffer);
+                        return new ValueTask<Segment<T>>(new Segment<T>(_buffer, endOfData, blockSize));
                     }
                 }
             }
@@ -134,25 +180,22 @@ namespace Iftm.AsyncQueue {
                     _awaiterStatus = AwaiterStatus.NoAwaiter;
 
                     var availableToRead = Math.Min(_buffer.Length - _start, Math.Min(_count, _maxReadBlock));
-                    var buffer = _buffer.AsMemory(_start, availableToRead);
 
-                    _readAwaiter.SetResult(buffer);
+                    _readAwaiter.SetResult(new ReadOnlySegment<T>(_buffer, _start, availableToRead));
                 }
             }
         }
 
-        ValueTask<ReadOnlyMemory<T>> IAsyncQueueReader<T>.GetReadBufferAsync() {
+        ValueTask<ReadOnlySegment<T>> IAsyncQueueReader<T>.GetReadBufferAsync() {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
                 if (_writerException != null) {
-                    return new ValueTask<ReadOnlyMemory<T>>(Task.FromException<ReadOnlyMemory<T>>(_writerException.SourceException));
+                    return new ValueTask<ReadOnlySegment<T>>(Task.FromException<ReadOnlySegment<T>>(_writerException.SourceException));
                 }
                 else if (_count > 0) {
                     var availableToRead = Math.Min(_buffer.Length - _start, Math.Min(_count, _maxReadBlock));
-                    var buffer = _buffer.AsMemory(_start, availableToRead);
-
-                    return new ValueTask<ReadOnlyMemory<T>>(buffer);
+                    return new ValueTask<ReadOnlySegment<T>>(new ReadOnlySegment<T> (_buffer, _start, availableToRead));
                 }
                 else if (_writerCompleted) {
                     return default;
@@ -183,8 +226,7 @@ namespace Iftm.AsyncQueue {
                     var toEndOfBuffer = _buffer.Length - endOfData;
                     var blockSize = Math.Min(freeAmount, Math.Min(toEndOfBuffer, _maxWriteBlock));
 
-                    var buffer = _buffer.AsMemory(endOfData, blockSize);
-                    _writeAwaiter.SetResult(buffer);
+                    _writeAwaiter.SetResult(new Segment<T>(_buffer, endOfData, blockSize));
                 }
             }
         }

@@ -164,7 +164,7 @@ public class BoundedChannelComparison {
         .ConsumeEnumerator();
 }
 
-[MemoryDiagnoser][WarmupCount(20)]
+[MemoryDiagnoser]
 public class SlowConsumerAndProducerBenchmarks {
     private static void Compute(int cycles) {
         long sum = 0;
@@ -224,7 +224,7 @@ public class SlowConsumerAndProducerBenchmarks {
     public ValueTask Direct_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000), 1_000_000);
 
     [Benchmark]
-    public ValueTask Amortized_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024, 1024), 1_000_000);
+    public ValueTask Amortized_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(4 * 1024, 2 * 1024, 2 * 1024), 1_000_000);
 
 
     [Benchmark]
@@ -242,7 +242,7 @@ public class SlowConsumerAndProducerBenchmarks {
     public ValueTask Direct_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000), 1_000_000, 1000);
 
     [Benchmark]
-    public ValueTask Amortized_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(10*1024, 1024, 1024), 1_000_000, 1000);
+    public ValueTask Amortized_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(8 * 1024, 2048, 2048), 1_000_000, 1000);
 }
 
 class Program {
