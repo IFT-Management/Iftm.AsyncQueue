@@ -1,48 +1,96 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace Iftm.AsyncQueue {
     public struct AsyncProcessingEnumerable<T> : IAsyncEnumerable<T> {
         private readonly IAsyncEnumerable<T> _enumerable;
-        private readonly int _bufferSize, _readHisteresis;
+        private readonly int _bufferSize, _readChunkSize, _writeChunkSize;
 
-        public AsyncProcessingEnumerable(IAsyncEnumerable<T> enumerable, int bufferSize, int readHisteresis = 1) =>
-            (_enumerable, _bufferSize, _readHisteresis) = (enumerable, bufferSize, readHisteresis);
+        public AsyncProcessingEnumerable(IAsyncEnumerable<T> enumerable, int bufferSize, int readChunkSize, int writeChunkSize) =>
+            (_enumerable, _bufferSize, _readChunkSize, _writeChunkSize) = (enumerable, bufferSize, readChunkSize, writeChunkSize);
 
         public IAsyncEnumerator<T> GetAsyncEnumerator(CancellationToken cancellationToken = default) =>
-            _enumerable.GetAsyncEnumerator(cancellationToken).ProcessAsynchronously(_bufferSize, _readHisteresis);
+            _enumerable.GetAsyncEnumerator(cancellationToken).ProcessAsynchronously(_bufferSize, _readChunkSize, _writeChunkSize);
     }
 
 
     public static class AsyncQueueExtensions {
-        public static IAsyncEnumerator<T> ProcessAsynchronously<T>(this IAsyncEnumerator<T> enumerator, int bufferSize, int readHisteresis = 1) {
-            static async void WriteToQueue(IAsyncEnumerator<T> enumerator, AsyncQueue<T> queue) {
+        private static (int Count, ValueTask<bool> MoveNextTask, bool EnumeratorConsumed) WriteToSpan<T>(Span<T> span, in T val, IAsyncEnumerator<T> enumerator) {
+            int count = 0;
+
+            span[count++] = val;
+            var task = enumerator.MoveNextAsync();
+
+            if (span.Length == 1) {
+                return (1, task, false);
+            }
+            else {
+                for (; ; ) {
+                    if (!task.IsCompleted) return (count, task, false);
+                    var hasData = task.GetAwaiter().GetResult();
+                    if (!hasData) return (count, default, true);
+                    span[count++] = enumerator.Current;
+                    task = enumerator.MoveNextAsync();
+
+                    if (count == span.Length) return (count, task, false);
+                }
+            }
+        }
+
+        public static async IAsyncEnumerator<T> ProcessAsynchronously<T>(this IAsyncEnumerator<T> enumerator, int bufferSize, int readChunkSize, int writeChunkSize) {
+            static async void WriteToQueue(IAsyncEnumerator<T> enumerator, IAsyncQueueWriter<T> queue) {
                 try {
-                    while (await enumerator.MoveNextAsync().ConfigureAwait(false)) {
-                        if (!await queue.WriteAsync(enumerator.Current).ConfigureAwait(false)) {
+                    var writeBuffer = await queue.GetWriteBufferAsync().ConfigureAwait(false);
+                    if (writeBuffer.Length == 0) return;
+
+                    var hasMore = await enumerator.MoveNextAsync().ConfigureAwait(false);
+
+                    while (hasMore) {
+                        var (count, moveNextTask, enumeratorConsumed) = WriteToSpan(writeBuffer.Span, enumerator.Current, enumerator);
+                        queue.Commit(count);
+                        if (enumeratorConsumed) {
                             break;
                         }
+                        else {
+                            writeBuffer = await queue.GetWriteBufferAsync().ConfigureAwait(false);
+                            if (writeBuffer.Length == 0) break;
+
+                            hasMore = await moveNextTask.ConfigureAwait(false);
+                        }
                     }
-                    queue.Complete();
+
+                    queue.CompleteWrite();
                 }
                 catch (Exception e) {
-                    queue.Complete(e);
+                    queue.CompleteWrite(e);
                 }
                 finally {
                     await enumerator.DisposeAsync().ConfigureAwait(false);
                 }
             }
 
-            var queue = new AsyncQueue<T>(bufferSize, readHisteresis);
+            var queue = new AsyncQueue<T>(bufferSize, readChunkSize, writeChunkSize);
 
-            Task.Run(() => WriteToQueue(enumerator, queue));
+            ThreadPool.QueueUserWorkItem(_ => WriteToQueue(enumerator, queue), null);
 
-            return queue;
+            using var readCompleter = queue.ReadCompleter;
+
+            for (; ; ) {
+                var readBuffer = await queue.GetReadBufferAsync().ConfigureAwait(false);
+                if (readBuffer.Length == 0) break;
+
+                foreach (var x in MemoryMarshal.ToEnumerable(readBuffer)) {
+                    yield return x;
+                }
+
+                queue.MarkRead(readBuffer.Length);
+            }
         }
 
-        public static AsyncProcessingEnumerable<T> ProcessAsynchronously<T>(this IAsyncEnumerable<T> enumerable, int bufferSize, int readHisteresis) =>
-            new AsyncProcessingEnumerable<T>(enumerable, bufferSize, readHisteresis);
+        public static AsyncProcessingEnumerable<T> ProcessAsynchronously<T>(this IAsyncEnumerable<T> enumerable, int bufferSize, int readChunkSize, int writeChunkSize) =>
+            new AsyncProcessingEnumerable<T>(enumerable, bufferSize, readChunkSize, writeChunkSize);
     }
 }

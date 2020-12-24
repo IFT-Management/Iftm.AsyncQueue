@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System;
 using System.Threading;
 using System.Threading.Channels;
+using System.Diagnostics;
 
 [MemoryDiagnoser]
 [WarmupCount(20)]
@@ -39,59 +40,6 @@ public class ReusableTaskCompletionSourceBenchmarks {
     }
 }
 
-[MemoryDiagnoser]
-[WarmupCount(20)]
-public class AsyncQueueBenchmarks {
-    [Benchmark]
-    public async Task ReadThenWrite() {
-        var pipeline = new AsyncQueue<int>(4);
-
-        for (int i = 0; i < 10_000_000; i++) {
-            ValueTask<bool> moveNextTask = pipeline.MoveNextAsync();
-            (await pipeline.WriteAsync(i).ConfigureAwait(false)).Expect(true);
-            (await moveNextTask.ConfigureAwait(false)).Expect(true);
-            pipeline.Current.Expect(i);
-        }
-    }
-
-    [Benchmark]
-    public async Task WriteThenRead() {
-        var pipeline = new AsyncQueue<int>(4);
-
-        for (int i = 0; i < 10_000_000; i++) {
-            (await pipeline.WriteAsync(i).ConfigureAwait(false)).Expect(true);
-            (await pipeline.MoveNextAsync().ConfigureAwait(false)).Expect(true);
-            pipeline.Current.Expect(i);
-        }
-    }
-
-    [Benchmark]
-    public async Task AsyncReaderAndWriter() {
-        const int pipelineSize = 1024;
-        const int iterations = 10_000_000;
-
-        var queue = new AsyncQueue<int>(pipelineSize);
-
-        async Task WriteToPipeline() {
-            for (int x = 1; x <= iterations; ++x) {
-                (await queue.WriteAsync(x).ConfigureAwait(false)).Expect(true);
-            }
-            queue.Complete();
-        }
-
-        var writeTask = WriteToPipeline();
-
-        int lastRead = 0;
-        while (await queue.MoveNextAsync().ConfigureAwait(false)) {
-            queue.Current.Expect(lastRead + 1);
-            ++lastRead;
-        }
-        await queue.DisposeAsync().ConfigureAwait(false);
-        lastRead.Expect(iterations);
-
-        await writeTask.ConfigureAwait(false);
-    }
-}
 
 static class SimulatedOperations {
     public static async IAsyncEnumerator<int> SimulateProcessing(this IAsyncEnumerator<int> enumerator, int procesingFrequency, TimeSpan processingLength) {
@@ -211,13 +159,13 @@ public class BoundedChannelComparison {
     [Benchmark]
     public ValueTask SocketReadingAndAsyncProcessing() =>
         SimulateSocketReading(_cycles, _iterationCount, _socketReadingDelay)
-        .ProcessAsynchronously(1024)
+        .ProcessAsynchronously(1024, 128, 128)
         .SimulateProcessing(_processingFrequency, _processingDelay)
         .ConsumeEnumerator();
 }
 
-[MemoryDiagnoser]
-public class SlowConsumerBenchmark {
+[MemoryDiagnoser][WarmupCount(20)]
+public class SlowConsumerAndProducerBenchmarks {
     private static void Compute(int cycles) {
         long sum = 0;
         for (int x = 0; x < cycles; ++x) {
@@ -273,34 +221,30 @@ public class SlowConsumerBenchmark {
     }
 
     [Benchmark]
-    public ValueTask DirectFastProducerFastConsumer() => ConsumeFast(ProduceFast(1_000_000), 1_000_000);
+    public ValueTask Direct_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000), 1_000_000);
 
     [Benchmark]
-    public ValueTask AmortizedFastProducerFastConsumer1() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1), 1_000_000);
-
-
-    [Benchmark]
-    public ValueTask DirectFastProducerSlowConsumer() => ConsumeSlow(ProduceFast(1_000_000), 1_000_000, 1000);
-
-    [Benchmark]
-    public ValueTask DirectSlowProducerFastConsumer() => ConsumeFast(ProduceSlow(1_000_000, 2000), 1_000_000);
+    public ValueTask Amortized_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024, 1024), 1_000_000);
 
 
     [Benchmark]
-    public ValueTask AmortizedFastProducerSlowConsumer() => ConsumeSlow(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024), 1_000_000, 1000);
+    public ValueTask Direct_Fast_To_Slow() => ConsumeSlow(ProduceFast(1_000_000), 1_000_000, 1000);
+
+    [Benchmark]
+    public ValueTask Direct_Slow_To_Fast() => ConsumeFast(ProduceSlow(1_000_000, 2000), 1_000_000);
 
 
     [Benchmark]
-    public ValueTask DirectSlowProducerSlowConsumer() => ConsumeSlow(ProduceSlow(1_000_000, 2000), 1_000_000, 1000);
+    public ValueTask Amortized_Fast_To_Slow() => ConsumeSlow(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024, 1024), 1_000_000, 1000);
+
 
     [Benchmark]
-    public ValueTask AmortizedSlowProducerSlowConsumer1() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(10*1024), 1_000_000, 1000);
+    public ValueTask Direct_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000), 1_000_000, 1000);
+
+    [Benchmark]
+    public ValueTask Amortized_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(10*1024, 1024, 1024), 1_000_000, 1000);
 }
 
 class Program {
-    static void Main() => BenchmarkRunner.Run<SlowConsumerBenchmark>();
-
-    //static async Task Main() {
-    //    await SlowConsumerBenchmark.ConsumeSlow(SlowConsumerBenchmark.ProduceSlow(10_000_000, 2000).ProcessAsynchronously(10 * 1024), 10_000_000, 1000);
-    //}
+    static void Main() => BenchmarkRunner.Run<SlowConsumerAndProducerBenchmarks>();
 }
