@@ -76,21 +76,38 @@ namespace Iftm.AsyncQueue {
 
             ThreadPool.QueueUserWorkItem(_ => WriteToQueue(enumerator, queue), null);
 
-            using var readCompleter = queue.ReadCompleter;
+            var reader = queue.AsReader;
+
+            using var readCompleter = reader.CompleteReadOnDispose();
 
             for (; ; ) {
-                var readBuffer = await queue.GetReadBufferAsync().ConfigureAwait(false);
+                var readBuffer = await reader.GetReadBufferAsync().ConfigureAwait(false);
                 if (readBuffer.Length == 0) break;
 
                 foreach (var x in MemoryMarshal.ToEnumerable(readBuffer)) {
                     yield return x;
                 }
 
-                queue.MarkRead(readBuffer.Length);
+                reader.MarkRead(readBuffer.Length);
             }
         }
 
         public static AsyncProcessingEnumerable<T> ProcessAsynchronously<T>(this IAsyncEnumerable<T> enumerable, int bufferSize, int readChunkSize, int writeChunkSize) =>
             new AsyncProcessingEnumerable<T>(enumerable, bufferSize, readChunkSize, writeChunkSize);
+
+        public static CompleteReadOnDispose<T> CompleteReadOnDispose<T>(this IAsyncQueueReader<T> reader) => new CompleteReadOnDispose<T>(reader);
     }
+
+    public readonly struct CompleteReadOnDispose<T> : IDisposable {
+        private readonly IAsyncQueueReader<T> _queue;
+
+        public CompleteReadOnDispose(IAsyncQueueReader<T> queue) {
+            _queue = queue;
+        }
+
+        public void Dispose() {
+            _queue.CompleteReader();
+        }
+    }
+
 }

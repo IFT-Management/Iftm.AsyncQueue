@@ -10,26 +10,29 @@ public class AsyncQueueTests {
     [Fact]
     public async Task PlainWrite() {
         var queue = new AsyncQueue<int>(2, 1, 1);
-        var writeBuffer = await queue.GetWriteBufferAsync();
+        var writer = queue.AsWriter;
+        var reader = queue.AsReader;
+
+        var writeBuffer = await writer.GetWriteBufferAsync();
         Assert.Equal(1, writeBuffer.Length);
 
         writeBuffer.Span[0] = 1;
-        queue.Commit(1);
+        writer.Commit(1);
 
-        writeBuffer = await queue.GetWriteBufferAsync();
+        writeBuffer = await writer.GetWriteBufferAsync();
         Assert.Equal(1, writeBuffer.Length);
 
         writeBuffer.Span[0] = 2;
-        queue.Commit(1);
+        writer.Commit(1);
 
-        var task = queue.GetWriteBufferAsync();
+        var task = writer.GetWriteBufferAsync();
         Assert.False(task.IsCompleted);
 
-        var readBuffer = await queue.GetReadBufferAsync();
+        var readBuffer = await reader.GetReadBufferAsync();
         Assert.False(task.IsCompleted);
 
         Assert.Equal(1, readBuffer.Span[0]);
-        queue.MarkRead(1);
+        reader.MarkRead(1);
 
         writeBuffer = await task;
     }

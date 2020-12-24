@@ -58,7 +58,7 @@ namespace Iftm.AsyncQueue {
             _maxWriteBlock = maxWriteBlock;
         }
 
-        public ValueTask<Memory<T>> GetWriteBufferAsync() {
+        ValueTask<Memory<T>> IAsyncQueueWriter<T>.GetWriteBufferAsync() {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -87,7 +87,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void CompleteWrite() {
+        void IAsyncQueueWriter<T>.CompleteWrite() {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -100,7 +100,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void CompleteWrite(Exception ex) {
+        void IAsyncQueueWriter<T>.CompleteWrite(Exception ex) {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -114,7 +114,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void Commit(int written) {
+        void IAsyncQueueWriter<T>.Commit(int written) {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             if (written == 0) return;
@@ -141,7 +141,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public ValueTask<ReadOnlyMemory<T>> GetReadBufferAsync() {
+        ValueTask<ReadOnlyMemory<T>> IAsyncQueueReader<T>.GetReadBufferAsync() {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -164,7 +164,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void MarkRead(int read) {
+        void IAsyncQueueReader<T>.MarkRead(int read) {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             if (read == 0) return;
@@ -189,7 +189,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void CompleteReader() {
+        void IAsyncQueueReader<T>.CompleteReader() {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -202,7 +202,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void CompleteReader(Exception ex) {
+        void IAsyncQueueReader<T>.CompleteReader(Exception ex) {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -216,18 +216,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public ReadCompleter<T> ReadCompleter => new ReadCompleter<T>(this);
-    }
-
-    public readonly struct ReadCompleter<T> : IDisposable {
-        private readonly AsyncQueue<T> _queue;
-
-        public ReadCompleter(AsyncQueue<T> queue) {
-            _queue = queue;
-        }
-
-        public void Dispose() {
-            _queue.CompleteReader();
-        }
+        public IAsyncQueueReader<T> AsReader => this;
+        public IAsyncQueueWriter<T> AsWriter => this;
     }
 }
