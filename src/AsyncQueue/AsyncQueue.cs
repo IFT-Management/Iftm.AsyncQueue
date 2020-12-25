@@ -149,6 +149,8 @@ namespace Iftm.AsyncQueue {
         }
 
         void IAsyncQueueWriter<T>.CompleteWrite() {
+            if (_writerCompleted) return;
+
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted || _buffer == null) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -165,6 +167,8 @@ namespace Iftm.AsyncQueue {
         }
 
         void IAsyncQueueWriter<T>.CompleteWrite(Exception ex) {
+            if (_writerCompleted) return;
+
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted || _buffer == null) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -263,6 +267,8 @@ namespace Iftm.AsyncQueue {
         }
 
         void IAsyncQueueReader<T>.CompleteReader() {
+            if (_readerCompleted) return;
+
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted || _buffer == null) throw new InvalidOperationException();
 
             lock (_lock) {
@@ -279,6 +285,8 @@ namespace Iftm.AsyncQueue {
         }
 
         void IAsyncQueueReader<T>.CompleteReader(Exception ex) {
+            if (_readerCompleted) return;
+
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted || _buffer == null) throw new InvalidOperationException();
 
             lock (_lock) {
