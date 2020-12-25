@@ -50,12 +50,12 @@ namespace Iftm.AsyncQueue {
 
                     while (hasMore) {
                         var (count, moveNextTask, enumeratorConsumed) = WriteToSpan(writeBuffer, enumerator.Current, enumerator);
-                        queue.Commit(count);
                         if (enumeratorConsumed) {
+                            queue.Commit(count);
                             break;
                         }
                         else {
-                            writeBuffer = await queue.GetWriteBufferAsync().ConfigureAwait(false);
+                            writeBuffer = await queue.GetWriteBufferAsync(count).ConfigureAwait(false);
                             if (writeBuffer.Length == 0) break;
 
                             hasMore = await moveNextTask.ConfigureAwait(false);
@@ -80,15 +80,16 @@ namespace Iftm.AsyncQueue {
 
             using var readCompleter = reader.CompleteReadOnDispose();
 
+            int markAsRead = 0;
             for (; ; ) {
-                var readBuffer = await reader.GetReadBufferAsync().ConfigureAwait(false);
+                var readBuffer = await reader.GetReadBufferAsync(markAsRead).ConfigureAwait(false);
                 if (readBuffer.Length == 0) break;
 
                 foreach (var x in readBuffer) {
                     yield return x;
                 }
 
-                reader.MarkRead(readBuffer.Length);
+                markAsRead = readBuffer.Length;
             }
         }
 

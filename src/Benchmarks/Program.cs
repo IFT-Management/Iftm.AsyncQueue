@@ -224,7 +224,7 @@ public class SlowConsumerAndProducerBenchmarks {
     public ValueTask Direct_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000), 1_000_000);
 
     [Benchmark]
-    public ValueTask Amortized_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(4 * 1024, 2 * 1024, 2 * 1024), 1_000_000);
+    public ValueTask Amortized_Fast_To_Fast() => ConsumeFast(ProduceFast(1_000_000).ProcessAsynchronously(16 * 1024, 4 * 1024, 4 * 1024), 1_000_000);
 
 
     [Benchmark]
@@ -233,10 +233,8 @@ public class SlowConsumerAndProducerBenchmarks {
     [Benchmark]
     public ValueTask Direct_Slow_To_Fast() => ConsumeFast(ProduceSlow(1_000_000, 2000), 1_000_000);
 
-
     [Benchmark]
     public ValueTask Amortized_Fast_To_Slow() => ConsumeSlow(ProduceFast(1_000_000).ProcessAsynchronously(10 * 1024, 1024, 1024), 1_000_000, 1000);
-
 
     [Benchmark]
     public ValueTask Direct_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000), 1_000_000, 1000);

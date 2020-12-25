@@ -55,7 +55,7 @@ namespace Iftm.AsyncQueue {
     }
 
     public interface IAsyncQueueReader<T> {
-        ValueTask<ReadOnlySegment<T>> GetReadBufferAsync();
+        ValueTask<ReadOnlySegment<T>> GetReadBufferAsync(int markRead = 0);
         void MarkRead(int read);
 
         void CompleteReader();
@@ -63,7 +63,7 @@ namespace Iftm.AsyncQueue {
     }
 
     public interface IAsyncQueueWriter<T> {
-        ValueTask<Segment<T>> GetWriteBufferAsync();
+        ValueTask<Segment<T>> GetWriteBufferAsync(int commit = 0);
         void Commit(int written);
 
         void CompleteWrite();
@@ -105,10 +105,12 @@ namespace Iftm.AsyncQueue {
             _maxWriteBlock = maxWriteBlock;
         }
 
-        ValueTask<Segment<T>> IAsyncQueueWriter<T>.GetWriteBufferAsync() {
+        ValueTask<Segment<T>> IAsyncQueueWriter<T>.GetWriteBufferAsync(int commitSize) {
             if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter || _writerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
+                if (commitSize > 0) CommitInternal(commitSize);
+
                 if (_readerException != null) {
                     return new ValueTask<Segment<T>>(Task.FromException<Segment<T>>(_readerException.SourceException));
                 }
@@ -166,30 +168,36 @@ namespace Iftm.AsyncQueue {
             if (written == 0) return;
 
             lock (_lock) {
-                if (_readerCompleted) return;
-
-                var endOfData = (_start + _count) & _bufferMask;
-
-                var toEndOfBuffer = _buffer.Length - endOfData;
-                var freeAmount = _buffer.Length - _count;
-                if (written > freeAmount || written > _maxWriteBlock || written > toEndOfBuffer) throw new ArgumentOutOfRangeException(nameof(written));
-
-                _count += written;
-
-                if (_awaiterStatus == AwaiterStatus.HasReadAwaiter) {
-                    _awaiterStatus = AwaiterStatus.NoAwaiter;
-
-                    var availableToRead = Math.Min(_buffer.Length - _start, Math.Min(_count, _maxReadBlock));
-
-                    _readAwaiter.SetResult(new ReadOnlySegment<T>(_buffer, _start, availableToRead));
-                }
+                CommitInternal(written);
             }
         }
 
-        ValueTask<ReadOnlySegment<T>> IAsyncQueueReader<T>.GetReadBufferAsync() {
+        private void CommitInternal(int written) {
+            if (_readerCompleted) return;
+
+            var endOfData = (_start + _count) & _bufferMask;
+
+            var toEndOfBuffer = _buffer.Length - endOfData;
+            var freeAmount = _buffer.Length - _count;
+            if (written > freeAmount || written > _maxWriteBlock || written > toEndOfBuffer) throw new ArgumentOutOfRangeException(nameof(written));
+
+            _count += written;
+
+            if (_awaiterStatus == AwaiterStatus.HasReadAwaiter) {
+                _awaiterStatus = AwaiterStatus.NoAwaiter;
+
+                var availableToRead = Math.Min(_buffer.Length - _start, Math.Min(_count, _maxReadBlock));
+
+                _readAwaiter.SetResult(new ReadOnlySegment<T>(_buffer, _start, availableToRead));
+            }
+        }
+
+        ValueTask<ReadOnlySegment<T>> IAsyncQueueReader<T>.GetReadBufferAsync(int markRead) {
             if (_awaiterStatus == AwaiterStatus.HasReadAwaiter || _readerCompleted) throw new InvalidOperationException();
 
             lock (_lock) {
+                if (markRead > 0) MarkReadInternal(markRead);
+
                 if (_writerException != null) {
                     return new ValueTask<ReadOnlySegment<T>>(Task.FromException<ReadOnlySegment<T>>(_writerException.SourceException));
                 }
@@ -213,21 +221,25 @@ namespace Iftm.AsyncQueue {
             if (read == 0) return;
 
             lock (_lock) {
-                if (read > _count || read > _maxReadBlock || read > _buffer.Length - _start) throw new ArgumentOutOfRangeException(nameof(read));
+                MarkReadInternal(read);
+            }
+        }
 
-                _start = (_start + read) & _bufferMask;
-                _count -= read;
+        private void MarkReadInternal(int read) {
+            if (read > _count || read > _maxReadBlock || read > _buffer.Length - _start) throw new ArgumentOutOfRangeException(nameof(read));
 
-                if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter) {
-                    _awaiterStatus = AwaiterStatus.NoAwaiter;
+            _start = (_start + read) & _bufferMask;
+            _count -= read;
 
-                    var freeAmount = _buffer.Length - _count;
-                    var endOfData = (_start + _count) & _bufferMask;
-                    var toEndOfBuffer = _buffer.Length - endOfData;
-                    var blockSize = Math.Min(freeAmount, Math.Min(toEndOfBuffer, _maxWriteBlock));
+            if (_awaiterStatus == AwaiterStatus.HasWriteAwaiter) {
+                _awaiterStatus = AwaiterStatus.NoAwaiter;
 
-                    _writeAwaiter.SetResult(new Segment<T>(_buffer, endOfData, blockSize));
-                }
+                var freeAmount = _buffer.Length - _count;
+                var endOfData = (_start + _count) & _bufferMask;
+                var toEndOfBuffer = _buffer.Length - endOfData;
+                var blockSize = Math.Min(freeAmount, Math.Min(toEndOfBuffer, _maxWriteBlock));
+
+                _writeAwaiter.SetResult(new Segment<T>(_buffer, endOfData, blockSize));
             }
         }
 
