@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -139,7 +140,11 @@ namespace Iftm.AsyncQueue {
         }
 
         private void ReturnBufferToPool() {
-            ArrayPool<T>.Shared.Return(_buffer!, !typeof(T).IsPrimitive);
+            if (RuntimeHelpers.IsReferenceOrContainsReferences<T>()) {
+                Array.Clear(_buffer!, 0, _capacity);
+            }
+
+            ArrayPool<T>.Shared.Return(_buffer!);
             _buffer = default!;
         }
 
