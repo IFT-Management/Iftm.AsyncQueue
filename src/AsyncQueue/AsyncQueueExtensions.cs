@@ -40,7 +40,7 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public static async IAsyncEnumerator<T> ProcessAsynchronously<T>(this IAsyncEnumerator<T> enumerator, int bufferSize, int readChunkSize, int writeChunkSize) {
+        public static async IAsyncEnumerator<T> ProcessAsynchronously<T>(this IAsyncEnumerator<T> enumerator, int bufferSize, int readChunkSize = 0, int writeChunkSize = 0) {
             static async void WriteToQueue(IAsyncEnumerator<T> enumerator, IAsyncQueueWriter<T> queue) {
                 try {
                     var writeBuffer = await queue.GetWriteBufferAsync().ConfigureAwait(false);
@@ -72,7 +72,10 @@ namespace Iftm.AsyncQueue {
                 }
             }
 
-            var queue = new AsyncQueue<T>(bufferSize, readChunkSize, writeChunkSize);
+            var readSize = readChunkSize > 0 ? readChunkSize : bufferSize >= 4 ? bufferSize >> 2 : 1;
+            var writeSize = writeChunkSize > 0 ? writeChunkSize : bufferSize >= 4 ? bufferSize  >> 2 : 1;
+
+            var queue = new AsyncQueue<T>(bufferSize) { MaxReadBlock = readSize, MaxWriteBlock = writeSize, MinReadBlock = readSize, MinWriteBlock = writeSize };
 
             ThreadPool.QueueUserWorkItem(_ => WriteToQueue(enumerator, queue), null);
 

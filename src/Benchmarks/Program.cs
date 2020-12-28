@@ -20,7 +20,7 @@ public class ReusableTaskCompletionSourceBenchmarks {
 
         async Task TestLeft() {
             for (int x = 0; x < iterations; ++x) {
-                left.SetResult(x);
+                left.SetResult(x, true);
                 (await right.GetResultAsync().ConfigureAwait(false)).Expect(x);
             }
         }
@@ -28,7 +28,7 @@ public class ReusableTaskCompletionSourceBenchmarks {
         async Task TestRight() {
             for (int x = 0; x < iterations; ++x) {
                 (await left.GetResultAsync().ConfigureAwait(false)).Expect(x);
-                right.SetResult(x);
+                right.SetResult(x, true);
             }
         }
 
@@ -241,8 +241,47 @@ public class SlowConsumerAndProducerBenchmarks {
 
     [Benchmark]
     public ValueTask Amortized_Slow_To_Slow() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(8 * 1024, 2048, 2048), 1_000_000, 1000);
+
+    [Benchmark]
+    public ValueTask Amortized_Slow_To_Slow2() => ConsumeSlow(ProduceSlow(1_000_000, 2000).ProcessAsynchronously(8 * 1024), 1_000_000, 1000);
 }
+
+//public class QueueWorkItemTest : IThreadPoolWorkItem {
+//    public long Count;
+//    public static readonly object Lock = new object();
+
+//    public void Execute() {
+//        if (Interlocked.Increment(ref Count) >= 100_000_000) {
+//            lock (Lock) {
+//                Monitor.Pulse(Lock);
+//            }
+//        }
+//        else {
+//            ThreadPool.UnsafeQueueUserWorkItem(this, false);
+//        }
+//    }
+//}
 
 class Program {
     static void Main() => BenchmarkRunner.Run<SlowConsumerAndProducerBenchmarks>();
+
+    //static async Task Main() {
+    //    var item = new QueueWorkItemTest();
+    //    lock (QueueWorkItemTest.Lock) {
+    //        var sw = new Stopwatch();
+    //        sw.Start();
+    //        for (int x = 0; x < Environment.ProcessorCount * 2; ++x) {
+    //            ThreadPool.UnsafeQueueUserWorkItem(item, false);
+    //        }
+
+    //        Monitor.Wait(QueueWorkItemTest.Lock);
+    //        sw.Stop();
+
+    //        Console.WriteLine(sw.ElapsedMilliseconds + " ms.");
+    //    }
+
+    //    //for (int x = 0; x < 20; ++x) {
+    //    //    await new SlowConsumerAndProducerBenchmarks().Amortized_Fast_To_Fast().ConfigureAwait(false);
+    //    //}
+    //}
 }

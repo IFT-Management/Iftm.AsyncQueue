@@ -9,7 +9,7 @@ using Xunit;
 public class AsyncQueueTests {
     [Fact]
     public async Task PlainWrite() {
-        var queue = new AsyncQueue<int>(2, 1, 1);
+        var queue = new AsyncQueue<int>(2);
         var writer = queue.AsWriter;
         var reader = queue.AsReader;
 

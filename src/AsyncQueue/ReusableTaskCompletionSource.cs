@@ -48,7 +48,7 @@ namespace Iftm.AsyncQueue {
         private protected static void ThrowPreviousTaskNotConsumed() => throw new InvalidOperationException("Attempting to get a new ValueTask before the previously obtained task was consumed.");
         private protected static void ThrowBadToken() => throw new ArgumentException("token");
 
-        private protected void PublishResult() {
+        private protected void PublishResult(bool preferLocalContinuation) {
             Action<object?>? continuation = _continuation;
             bool continuationInitialized = false;
 
@@ -89,7 +89,7 @@ namespace Iftm.AsyncQueue {
                             Task.Factory.StartNew(callback, this, CancellationToken.None, TaskCreationOptions.DenyChildAttach, _taskScheduler);
                         }
                         else {
-                            ThreadPool.UnsafeQueueUserWorkItem(this, false);
+                            ThreadPool.UnsafeQueueUserWorkItem(this, preferLocalContinuation);
                         }
 
                         break;
@@ -102,14 +102,14 @@ namespace Iftm.AsyncQueue {
             }
         }
 
-        public void SetCancelled(CancellationToken ct = default) {
+        public void SetCancelled(CancellationToken ct, bool preferLocalContinuation) {
             _exception = new OperationCanceledException(ct);
-            PublishResult();
+            PublishResult(preferLocalContinuation);
         }
 
-        public void SetException(Exception ex) {
+        public void SetException(Exception ex, bool preferLocalContinuation) {
             _exception = ex;
-            PublishResult();
+            PublishResult(preferLocalContinuation);
         }
 
         private protected ValueTaskSourceStatus GetStatus(short token) {
@@ -236,9 +236,9 @@ namespace Iftm.AsyncQueue {
         /// Sets the value to be read using a call to <see cref="GetResultAsync"/>.
         /// </summary>
         /// <param name="val">Value to be written.</param>
-        public void SetResult(TResult val) {
+        public void SetResult(TResult val, bool preferLocalContinuation) {
             _result = val;
-            PublishResult();
+            PublishResult(preferLocalContinuation);
         }
 
         /// <summary>
@@ -347,8 +347,8 @@ namespace Iftm.AsyncQueue {
         /// <summary>
         /// Sets the value to be read using a call to <see cref="GetResultAsync"/>.
         /// </summary>
-        public void SetResult() {
-            PublishResult();
+        public void SetResult(bool preferLocalContinuation) {
+            PublishResult(preferLocalContinuation);
         }
 
         /// <summary>
